@@ -1,12 +1,15 @@
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
+from werkzeug.utils import secure_filename
 import sqlite3
+import os
 from datetime import datetime
 import openpyxl
 from io import BytesIO
 
 app = Flask(__name__, static_folder='photos')
-CORS(app)
+CORS(app, supports_credentials=True, origins=["http://localhost:5173"])
+
 
 # Connect to SQLite
 def get_db():
@@ -77,6 +80,44 @@ def get_checked_in_students():
     conn = get_db()
     students = conn.execute('SELECT * FROM students WHERE status = "checked_in"').fetchall()
     return jsonify([dict(row) for row in students])
+
+
+
+
+# Upload Excel file and insert data into DB
+@app.route('/upload_excel', methods=['POST'])
+def upload_excel():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+    
+    file = request.files['file']
+    
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+
+    try:
+        wb = openpyxl.load_workbook(file)
+        sheet = wb.active
+        conn = get_db()
+
+        for i, row in enumerate(sheet.iter_rows(min_row=2, values_only=True)):  # Skip header
+            qr_id, name, photo, status, timestamp = row[1], row[2], row[3], row[4], row[5]
+            try:
+                conn.execute(
+                    'INSERT OR IGNORE INTO students (qr_id, name, photo, status, timestamp) VALUES (?, ?, ?, ?, ?)',
+                    (qr_id, name, photo, status, timestamp)
+                )
+            except Exception as e:
+                print(f"Row {i+2} error: {e}")
+                continue
+        
+        conn.commit()
+        return jsonify({'message': 'Excel data uploaded successfully'}), 200
+
+    except Exception as e:
+        print("Upload Error:", e)
+        return jsonify({'error': str(e)}), 500
+
 
 # Export students to Excel file
 @app.route('/export_students', methods=['GET'])
